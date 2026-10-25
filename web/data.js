@@ -60,6 +60,15 @@ var Prefs = (function () {
       if (name) m[key] = name; else delete m[key];
       this.set('inputNames', m);
     },
+    /** Home Settings → My services: a streaming service the person doesn't pay for gives no picks (all on at first). */
+    serviceOn: function (key) { return (pick('servicesOff', []) || []).indexOf(key) < 0; },
+    setService: function (key, on) {
+      var off = (pick('servicesOff', []) || []).filter(function (k) { return k !== key; });
+      if (!on) off.push(key);
+      this.set('servicesOff', off);
+    },
+    /** Also trending titles outside those services, opened in the Stremio app (off at first). */
+    stremio: function () { return pick('stremio', false); },
     /** The shelf_apps of the build that last set the shelf, so a new one wins once over the TV's choice. */
     shelfConfig: function () { return pick('shelfConfig', ''); },
     set: function (name, value) { v[name] = value; save(); this.version++; },
@@ -254,8 +263,14 @@ var Data = (function () {
 
   var installed = [];   // the TV's apps, from TV.apps()
 
-  /** The installed app for a service key, or null. */
+  var STREMIO = /stremio/i;
+
+  /** The installed app for a service key ('stremio' too), or null. */
   function appFor(key) {
+    if (key === 'stremio') {
+      for (var t = 0; t < installed.length; t++) if (STREMIO.test(installed[t].id) || STREMIO.test(installed[t].title)) return installed[t];
+      return null;
+    }
     for (var s = 0; s < SERVICES.length; s++) {
       if (SERVICES[s][1] !== key) continue;
       for (var i = 0; i < installed.length; i++) {
@@ -263,6 +278,24 @@ var Data = (function () {
       }
     }
     return null;
+  }
+
+  /** A service the picks may come from: its app is on the TV and it's on in My services. */
+  function has(key) { return !!appFor(key) && Prefs.serviceOn(key); }
+
+  /** Titles outside those services go to Stremio: switched on, and the app is on the TV. */
+  function viaStremio() { return Prefs.stremio() && !!appFor('stremio'); }
+
+  /** Whether a pick can be shown now: its service is still one of the person's, or it's Stremio's and that's on. */
+  function usable(app) { return app === 'stremio' ? viaStremio() : !!app && has(app); }
+
+  /** The services whose app is on this TV, for My services: [{key, name, on}]. */
+  function tvServices() {
+    var out = [];
+    for (var i = 0; i < SERVICES.length; i++) {
+      if (appFor(SERVICES[i][1])) out.push({key: SERVICES[i][1], name: SERVICES[i][4], on: Prefs.serviceOn(SERVICES[i][1])});
+    }
+    return out;
   }
 
   /** "… Amazon Channel" is sold inside another app; Apple TV is only the streaming service (350; 2 is the store). */
@@ -296,8 +329,8 @@ var Data = (function () {
 
   function sourceStamp() {
     var s = KEY.length + ':' + KEY.slice(-6) + ':' + REGION + (CONFIG.hideAnimation ? ':no-animation' : '');
-    for (var i = 0; i < SERVICES.length; i++) s += appFor(SERVICES[i][1]) ? '1' : '0';
-    return s;
+    for (var i = 0; i < SERVICES.length; i++) s += has(SERVICES[i][1]) ? '1' : '0';
+    return s + (viaStremio() ? ':stremio' : '');
   }
 
   function franchise(title) {
@@ -312,7 +345,7 @@ var Data = (function () {
     if (!KEY) return list;
     for (var i = 0; i < picks.length; i++) {
       var p = picks[i];
-      if ((kind === null || kind === p.kind) && (!p.detailed || (p.app && appFor(p.app)))) list.push(p);
+      if ((kind === null || kind === p.kind) && (!p.detailed || usable(p.app))) list.push(p);
     }
     if (!list.length) return list;
     var hour = Math.floor(Date.now() / 3600000), out = [], seen = {};
@@ -364,7 +397,7 @@ var Data = (function () {
 
   /** Genre, runtime or seasons, and the service it's on among the TV's apps. */
   function details(p, done) {
-    tmdb('/' + p.kind + '/' + p.id + '?language=' + lang() + '&append_to_response=watch/providers,images&include_image_language=null,'
+    tmdb('/' + p.kind + '/' + p.id + '?language=' + lang() + '&append_to_response=watch/providers,images,external_ids&include_image_language=null,'
         + I18N.base + ',en', function (err, o) {
       if (err) { done(err); return; }
       var best = bestBackdrop(o.images);
@@ -382,10 +415,14 @@ var Data = (function () {
       }
       var wp = o['watch/providers'], here = wp && wp.results && wp.results[REGION], flat = here && here.flatrate;
       p.app = null;
+      p.service = '';
+      p.imdb = (o.external_ids && o.external_ids.imdb_id) || '';
       for (var i = 0; flat && i < flat.length && !p.app; i++) {
         var s = service(flat[i].provider_name, flat[i].provider_id);
-        if (s && appFor(s[1])) { p.app = s[1]; p.service = s[4]; }
+        if (s && has(s[1])) { p.app = s[1]; p.service = s[4]; }
       }
+      // On none of the person's services: Stremio's, when that's on.
+      if (!p.app && viaStremio()) { p.app = 'stremio'; p.service = 'Stremio'; }
       if (p.service && p.app) parts.push(p.service);
       p.meta = parts.join(' · ');
       title(p, o, function () {
@@ -448,9 +485,10 @@ var Data = (function () {
       var ids = [];
       for (var i = 0; res.results && i < res.results.length; i++) {
         var s = service(res.results[i].provider_name, res.results[i].provider_id);
-        if (s && appFor(s[1])) ids.push(res.results[i].provider_id);
+        if (s && has(s[1])) ids.push(res.results[i].provider_id);
       }
-      if (!ids.length) { done(new Error("none of the TV's streaming apps are on TMDB")); return; }
+      // With Stremio on, trending alone is enough; the new releases need one of the person's services.
+      if (!ids.length && !viaStremio()) { done(new Error("none of the TV's streaming apps are on TMDB")); return; }
       var common = '&language=' + lang() + '&watch_region=' + REGION + '&with_watch_monetization_types=flatrate&include_adult=false'
           + '&sort_by=popularity.desc&with_watch_providers=' + encodeURIComponent(ids.join('|'))
           + (CONFIG.hideAnimation ? '&without_genres=' + ANIMATION : '');
@@ -465,6 +503,14 @@ var Data = (function () {
           }, next);
         });
       }, function () {
+        if (!ids.length) {   // Stremio only: no service of the person's to look for new releases on
+          var only = [], seen0 = {};
+          alternate(only, seen0, hot.movie, hot.tv, 24);
+          if (!only.length) { done(new Error('TMDB returned no recommendations')); return; }
+          picks = only;
+          done(null);
+          return;
+        }
         tmdb('/discover/movie?vote_count.gte=30&primary_release_date.gte=' + day(-365) + '&primary_release_date.lte=' + day(0) + common, function (e1, r1) {
           for (var j = 0; !e1 && j < r1.results.length; j++) addPick(fresh.movie, r1.results[j], 'movie');
           tmdb('/discover/tv?vote_count.gte=20&air_date.gte=' + day(-90) + '&air_date.lte=' + day(0) + common, function (e2, r2) {
@@ -540,6 +586,10 @@ var Data = (function () {
     onChange: function (fn) { listeners.push(fn); },
     setApps: function (apps) { installed = apps; },
     appFor: appFor,
+    tvServices: tvServices,
+    hasStremio: function () { return !!appFor('stremio'); },
+    /** My services or Stremio changed: the picks shown now follow at once, and the list is fetched again. */
+    servicesChanged: function () { changed(); refreshRecs(); },
     refresh: function () { refreshWeather(); refreshPrices(); refreshRecs(); },
     settingsChanged: function () { pricesAt = 0; refreshPrices(); changed(); },
     get weather() { return weather; },

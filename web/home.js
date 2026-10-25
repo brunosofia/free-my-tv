@@ -724,8 +724,27 @@
     return rows;
   }
 
+  /** My services: the TV's streaming apps the picks may come from, then Stremio for the other titles. */
+  function serviceRows() {
+    var rows = [], list = Data.tvServices();
+    for (var i = 0; i < list.length; i++) {
+      (function (s) {
+        rows.push({label: s.name, toggle: s.on, step: function () { Prefs.setService(s.key, !Prefs.serviceOn(s.key)); Data.servicesChanged(); }});
+      })(list[i]);
+    }
+    var stremio = Data.hasStremio();
+    rows.push({label: tr('Other titles in Stremio'), toggle: stremio && Prefs.stremio(), dim: !stremio,
+      step: function () {
+        if (!stremio) { toast(tr('Stremio is not on this TV')); return; }
+        Prefs.set('stremio', !Prefs.stremio());
+        Data.servicesChanged();
+      }});
+    return rows;
+  }
+
   function settingRows() {
     if (settingsPage === 'inputs') return inputNameRows();
+    if (settingsPage === 'services') return serviceRows();
     var unit = Prefs.temperature(), theme = Prefs.theme();
     var auto = tr('Automatic'), picked = pickedLanguage();
     var rows = [
@@ -750,6 +769,7 @@
           step: function () { if (Prefs.quotes()) { Prefs.setCoin(i, !Prefs.coin(i)); Data.settingsChanged(); } }});
       })(i);
     }
+    if (Data.hasKey()) rows.push({label: tr('My services'), value: '›', step: function (d) { if (d >= 0) openPage('services'); }});
     if (inputItems().length) rows.push({label: tr('Input names'), value: '›', step: function (d) { if (d >= 0) openInputNames(false); }});
     rows.push({label: tr('Shelf'), value: '›', step: function (d) { if (d >= 0) openShelfEdit(); }});
     rows.push({label: tr('TV Settings'), value: '›', step: function (d) { if (d >= 0) tvSettings(); }});
@@ -766,9 +786,9 @@
   function renderSettings() {
     var box = $('settings').firstChild;
     box.innerHTML = '';
-    var title = el('div', 'title', box), names = settingsPage === 'inputs';
-    sym(names ? 'hdmi' : 'settings', title);
-    title.appendChild(document.createTextNode(names ? tr('Input names') : tr('Home Settings')));
+    var title = el('div', 'title', box), names = settingsPage === 'inputs', services = settingsPage === 'services';
+    sym(names ? 'hdmi' : services ? 'play' : 'settings', title);
+    title.appendChild(document.createTextNode(names ? tr('Input names') : services ? tr('My services') : tr('Home Settings')));
     var list = el('div', 'list', box), holder = el('div', 'rows', list);
     rowsNow = settingRows();
     list.style.height = Math.min(rowsNow.length, 7) * 78 + 'px';
@@ -783,7 +803,8 @@
       }
       hover(row, Z.SETTINGS, i);
     }
-    el('div', 'hint', box, names ? tr('OK renames the input.') : tr('OK or the arrows change the value.'));
+    el('div', 'hint', box, names ? tr('OK renames the input.') : services ? tr('Picks only come from the services that are on.')
+        : tr('OK or the arrows change the value.'));
     updateFocus();
   }
 
@@ -798,10 +819,23 @@
     updateFocus();
   }
 
-  function backFromInputNames() {
-    if (namesFromDrawer) { closeSheets(); return; }
+  /** Another page of Home Settings (My services), opened from its row. */
+  function openPage(page) {
+    namesFromDrawer = false;
+    settingsPage = page;
+    st.zone = Z.SETTINGS;
+    st.row = 0;
+    renderSettings();
+    setClass($('settings'), 'open', true);
+    updateFocus();
+  }
+
+  /** Back from a page: to Home Settings, on that page's row (the input names opened from the drawer just close). */
+  function backFromPage() {
+    if (settingsPage === 'inputs' && namesFromDrawer) { closeSheets(); return; }
+    var label = settingsPage === 'inputs' ? tr('Input names') : tr('My services');
     openSettings();
-    for (var i = 0; i < rowsNow.length; i++) if (rowsNow[i].label === tr('Input names')) st.row = i;
+    for (var i = 0; i < rowsNow.length; i++) if (rowsNow[i].label === label) st.row = i;
     updateFocus();
   }
 
@@ -978,6 +1012,21 @@
     };
   }
 
+  /**
+   * A pick on none of the person's services, in Stremio: its page by IMDb id (Stremio's own link), where the app takes
+   * it; it opens the app either way, and the toast names the title to look for.
+   */
+  function openInStremio(app, p) {
+    var uri = p.imdb ? 'stremio:///detail/' + (p.kind === 'tv' ? 'series' : 'movie') + '/' + p.imdb : '';
+    // The name first, while still on screen: Stremio covers the home screen once it opens.
+    toast(trf('Look for “{title}” in Stremio', {title: p.title}));
+    setTimeout(function () {
+      TV.launch(app.id, uri ? {uri: uri} : null, function (ok) {
+        if (!ok) toast(trf("Couldn't open {app}.", {app: app.title}));
+      });
+    }, 1500);
+  }
+
   function tvSettings() {
     TV.settings(function (ok) {
       if (!ok) toast(tr("Couldn't open TV Settings"));
@@ -999,7 +1048,8 @@
         return;
       case Z.CARDS:
         var p = cards[st.card], app = p && Data.appFor(p.app);
-        if (app) launcher(app.id, app.title)();
+        if (app && p.app === 'stremio') openInStremio(app, p);
+        else if (app) launcher(app.id, app.title)();
         return;
       case Z.SHELF:
         if (shelf[st.shelf]) launcher(shelf[st.shelf].id, shelf[st.shelf].title)();
@@ -1081,7 +1131,7 @@
 
   function back() {
     if (st.zone === Z.NAME) { closeNameEdit(false); return; }
-    if (st.zone === Z.SETTINGS && settingsPage === 'inputs') { backFromInputNames(); return; }
+    if (st.zone === Z.SETTINGS && settingsPage !== 'main') { backFromPage(); return; }
     if (st.zone === Z.EDIT) { setClass($('shelfedit'), 'open', false); openSettings(); st.row = rowsNow.length - 2; updateFocus(); return; }
     if (st.zone === Z.LANG) { closeLanguages(false); return; }
     if (sheetOpen()) { closeSheets(); return; }
