@@ -557,6 +557,7 @@ var Data = (function () {
       return mins < rise || mins >= set;
     },
 
+    number: fmt,
     compact: function (v) {
       if (isNaN(v)) return '—';
       if (v >= 1000000) return fmt(v / 1000000, 2) + 'M';

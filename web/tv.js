@@ -402,6 +402,20 @@ var TV = (function () {
     /** LG: keeps the TV's screensaver away while ours will take over (`hold` says when). */
     holdScreenSaver: holdScreenSaver,
 
+    /** The TV's memory in bytes, {total, free}; null where the TV doesn't say (LG). Samsung: tizen.systeminfo. */
+    memory: function () {
+      if (samsung) {
+        try {
+          var si = window.tizen.systeminfo, total = si.getTotalMemory(), free = si.getAvailableMemory();
+          return total > 0 && free >= 0 ? {total: total, free: Math.min(free, total)} : null;
+        } catch (e) { return null; }
+      }
+      if (webos) return null;
+      // The browser stand-in: a 2.5 GB TV with about half of it in use.
+      var gb = 1073741824;
+      return {total: 2.5 * gb, free: (1.1 + 0.2 * Math.random()) * gb};
+    },
+
     /** Back on the first screen: back to wherever the person came from. */
     back: function () {
       if (samsung) {

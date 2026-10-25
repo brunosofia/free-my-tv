@@ -308,6 +308,8 @@
     list = $('buttons').children;
     for (i = 0; i < list.length; i++) setClass(list[i], 'focus', st.zone === Z.TOP && st.top === 3 + i);
     setClass($('quotes'), 'hide', st.zone === Z.TOP && st.top >= 3);
+    // A focused round button's name shows where the RAM line is.
+    setClass($('ram'), 'hide', st.zone === Z.TOP && st.top >= 3);
     list = $('cards').children;
     for (i = 0; i < list.length; i++) setClass(list[i], 'focus', st.zone === Z.CARDS && st.card === i);
     list = $('tiles').children;
@@ -385,6 +387,23 @@
       coin(coins[i], item);
       el('span', '', item, Data.compact(Data.prices[coins[i]]));
     }
+  }
+
+  /** The TV's memory in use, under the round buttons; hidden where the TV doesn't say (LG). Every 5 s. */
+  function renderRam() {
+    var box = $('ram'), m = TV.memory();
+    if (!m) { box.style.display = 'none'; return; }
+    var gb = 1073741824, used = m.total - m.free, share = used / m.total;
+    box.style.display = '';
+    box.firstChild.firstChild.style.webkitTransform = 'scaleX(' + share + ')';
+    box.firstChild.firstChild.style.transform = 'scaleX(' + share + ')';
+    box.lastChild.textContent = 'RAM ' + Data.number(used / gb, 1) + ' / ' + Data.number(m.total / gb, 1) + ' GB';
+    setClass(box, 'high', share >= 0.85);
+  }
+
+  function tickRam() {
+    if (!saverOn) renderRam();
+    setTimeout(tickRam, 5000);
   }
 
   // MARK: - Picks and background
@@ -1170,6 +1189,7 @@
   fit();
   renderTop();
   tickClock();
+  tickRam();
   loadApps(function () {
     renderAll();
     Data.refresh();
