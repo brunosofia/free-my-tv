@@ -52,6 +52,14 @@ var Prefs = (function () {
     quotes: function () { return pick('quotes', CONFIG.showCrypto !== false); },
     coin: function (i) { var c = pick('coins', null); return c ? c[i] !== false : true; },
     shelf: function () { return pick('shelf', null); },
+    /** The name given to an input on the TV ("hdmi1" → "PlayStation"), or ''. */
+    inputName: function (key) { var m = pick('inputNames', null); return m && m[key] ? m[key] : ''; },
+    setInputName: function (key, name) {
+      var m = {}, old = pick('inputNames', null) || {};
+      for (var k in old) if (old.hasOwnProperty(k)) m[k] = old[k];
+      if (name) m[key] = name; else delete m[key];
+      this.set('inputNames', m);
+    },
     /** The shelf_apps of the build that last set the shelf, so a new one wins once over the TV's choice. */
     shelfConfig: function () { return pick('shelfConfig', ''); },
     set: function (name, value) { v[name] = value; save(); this.version++; },

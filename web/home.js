@@ -257,6 +257,19 @@
 
   var apps = [], shelf = [], others = [], inputs = [];
 
+  /** An input's name: the one given on the TV (Home Settings → Input names), else the TV's ("HDMI 2"). */
+  function inputName(x) { return Prefs.inputName(x.key) || x.label || tr('Live TV'); }
+
+  /** The HDMI inputs as shelf items: added in the shelf editor, OK on one switches the TV to it. */
+  function inputItems() {
+    var out = [];
+    for (var i = 0; i < inputs.length; i++) {
+      var x = inputs[i];
+      if (x.key && x.key !== 'live') out.push({id: x.id, title: inputName(x), icon: '', color: '#3A3A3C', input: true});
+    }
+    return out;
+  }
+
   /** shelf_apps in config.properties: the shelf in that order, by id or name (part of it). */
   var WANTED = (CONFIG.shelfApps || []).map(function (s) { return s.toLowerCase(); });
 
@@ -265,10 +278,10 @@
       Prefs.set('shelf', null);
       Prefs.set('shelfConfig', WANTED.join(','));
     }
-    var chosen = Prefs.shelf(), out = [];
+    var chosen = Prefs.shelf(), out = [], pool = apps.concat(inputItems());
     if (chosen) {
       for (var i = 0; i < chosen.length; i++) {
-        for (var j = 0; j < apps.length; j++) if (apps[j].id === chosen[i]) out.push(apps[j]);
+        for (var j = 0; j < pool.length; j++) if (pool[j].id === chosen[i]) out.push(pool[j]);
       }
     } else if (WANTED.length) {
       for (var w = 0; w < WANTED.length; w++) {
@@ -292,11 +305,11 @@
 
   // MARK: - Focus
 
-  var Z = {TOP: 'top', CARDS: 'cards', SHELF: 'shelf', DRAWER: 'drawer', APPS: 'apps', SETTINGS: 'settings', EDIT: 'edit', LANG: 'lang'};
+  var Z = {TOP: 'top', CARDS: 'cards', SHELF: 'shelf', DRAWER: 'drawer', APPS: 'apps', SETTINGS: 'settings', EDIT: 'edit', LANG: 'lang', NAME: 'name'};
   var st = {zone: Z.SHELF, top: 0, tab: 0, card: 0, shelf: 0, drawer: 0, grid: 0, row: 0, edit: 0, lang: 0};
   var cards = [];
 
-  function sheetOpen() { return st.zone === Z.APPS || st.zone === Z.SETTINGS || st.zone === Z.EDIT || st.zone === Z.LANG; }
+  function sheetOpen() { return st.zone === Z.APPS || st.zone === Z.SETTINGS || st.zone === Z.EDIT || st.zone === Z.LANG || st.zone === Z.NAME; }
 
   function updateFocus() {
     var i, list;
@@ -359,7 +372,7 @@
   var TAB_KIND = [null, 'movie', 'tv'];
 
   function renderTop() {
-    $('title').textContent = tr('For You');
+    $('title').textContent = CONFIG.title || tr('For You');
     var tabs = $('tabs');
     tabs.innerHTML = '';
     var names = [tr('Explore'), tr('Movies'), tr('Shows')];
@@ -546,9 +559,10 @@
     drawerItems = [];
     for (var i = 0; i < inputs.length; i++) {
       var x = inputs[i];
-      drawerItems.push({label: x.label || tr('Live TV'), symbol: x.symbol, off: !x.connected, run: launcher(x.id, x.label)});
+      drawerItems.push({label: inputName(x), symbol: x.symbol, off: !x.connected, run: launcher(x.id, inputName(x))});
     }
     drawerInputs = drawerItems.length;
+    if (inputItems().length) drawerItems.push({label: tr('Input names'), symbol: 'hdmi', run: function () { openInputNames(true); }});
     drawerItems.push({label: tr('All Apps'), symbol: 'apps', run: openApps});
     drawerItems.push({label: tr('Home Settings'), symbol: 'settings', run: openSettings});
     drawerItems.push({label: tr('TV Settings'), symbol: 'tv_settings', run: tvSettings});
@@ -686,6 +700,8 @@
     setClass($('settings'), 'open', false);
     setClass($('shelfedit'), 'open', false);
     setClass($('langpick'), 'open', false);
+    setClass($('nameedit'), 'open', false);
+    naming = null;
     langHint = null;
     st.zone = Z.SHELF;
     updateFocus();
@@ -693,7 +709,23 @@
 
   // MARK: - Home Settings
 
+  // Home Settings shows one of two pages: the settings, or the inputs' names ('inputs').
+  var settingsPage = 'main', namesFromDrawer = false;
+
+  function inputNameRows() {
+    var rows = [];
+    for (var i = 0; i < inputs.length; i++) {
+      (function (x) {
+        if (!x.key || x.key === 'live') return;
+        rows.push({label: x.label, value: Prefs.inputName(x.key) || '—', opens: true,
+          step: function (d) { if (d >= 0) openNameEdit(x); }});
+      })(inputs[i]);
+    }
+    return rows;
+  }
+
   function settingRows() {
+    if (settingsPage === 'inputs') return inputNameRows();
     var unit = Prefs.temperature(), theme = Prefs.theme();
     var auto = tr('Automatic'), picked = pickedLanguage();
     var rows = [
@@ -718,6 +750,7 @@
           step: function () { if (Prefs.quotes()) { Prefs.setCoin(i, !Prefs.coin(i)); Data.settingsChanged(); } }});
       })(i);
     }
+    if (inputItems().length) rows.push({label: tr('Input names'), value: '›', step: function (d) { if (d >= 0) openInputNames(false); }});
     rows.push({label: tr('Shelf'), value: '›', step: function (d) { if (d >= 0) openShelfEdit(); }});
     rows.push({label: tr('TV Settings'), value: '›', step: function (d) { if (d >= 0) tvSettings(); }});
     return rows;
@@ -733,9 +766,9 @@
   function renderSettings() {
     var box = $('settings').firstChild;
     box.innerHTML = '';
-    var title = el('div', 'title', box);
-    sym('settings', title);
-    title.appendChild(document.createTextNode(tr('Home Settings')));
+    var title = el('div', 'title', box), names = settingsPage === 'inputs';
+    sym(names ? 'hdmi' : 'settings', title);
+    title.appendChild(document.createTextNode(names ? tr('Input names') : tr('Home Settings')));
     var list = el('div', 'list', box), holder = el('div', 'rows', list);
     rowsNow = settingRows();
     list.style.height = Math.min(rowsNow.length, 7) * 78 + 'px';
@@ -750,11 +783,72 @@
       }
       hover(row, Z.SETTINGS, i);
     }
-    el('div', 'hint', box, tr('OK or the arrows change the value.'));
+    el('div', 'hint', box, names ? tr('OK renames the input.') : tr('OK or the arrows change the value.'));
+    updateFocus();
+  }
+
+  /** Home Settings' page of input names. Back: from the drawer it closes, from Home Settings it goes back there. */
+  function openInputNames(fromDrawer) {
+    namesFromDrawer = fromDrawer;
+    settingsPage = 'inputs';
+    st.zone = Z.SETTINGS;
+    st.row = 0;
+    renderSettings();
+    setClass($('settings'), 'open', true);
+    updateFocus();
+  }
+
+  function backFromInputNames() {
+    if (namesFromDrawer) { closeSheets(); return; }
+    openSettings();
+    for (var i = 0; i < rowsNow.length; i++) if (rowsNow[i].label === tr('Input names')) st.row = i;
+    updateFocus();
+  }
+
+  // MARK: - An input's name: a text field, typed with the TV's own keyboard
+
+  var naming = null;
+
+  function openNameEdit(x) {
+    naming = x;
+    var box = $('nameedit').firstChild;
+    box.innerHTML = '';
+    var title = el('div', 'title', box);
+    sym('hdmi', title);
+    title.appendChild(document.createTextNode(x.label));
+    var field = el('input', 'field', box);
+    field.type = 'text';
+    field.maxLength = 24;
+    field.value = Prefs.inputName(x.key);
+    field.placeholder = x.label;
+    el('div', 'hint', box, tr('Type a name, then OK. Empty brings back the original.'));
+    setClass($('settings'), 'open', false);
+    setClass($('nameedit'), 'open', true);
+    st.zone = Z.NAME;
+    updateFocus();
+    // The TV's keyboard comes up with the focus; a beat later, once the sheet is shown.
+    setTimeout(function () { try { field.focus(); } catch (e) {} }, 60);
+  }
+
+  function closeNameEdit(save) {
+    var field = $('nameedit').querySelector('input'), x = naming;
+    if (save && field && x) {
+      Prefs.setInputName(x.key, field.value.replace(/^\s+|\s+$/g, ''));
+      pickShelf();
+      renderShelf();
+      renderDrawer();
+    }
+    if (field) { try { field.blur(); } catch (e) {} }
+    naming = null;
+    setClass($('nameedit'), 'open', false);
+    st.zone = Z.SETTINGS;
+    renderSettings();
+    setClass($('settings'), 'open', true);
     updateFocus();
   }
 
   function openSettings() {
+    settingsPage = 'main';
     st.zone = Z.SETTINGS;
     st.row = 0;
     renderSettings();
@@ -819,7 +913,7 @@
 
   function editList() {
     var ids = shelf.map(function (a) { return a.id; });
-    return {ids: ids, rows: apps.slice().sort(function (a, b) {
+    return {ids: ids, rows: apps.concat(inputItems()).sort(function (a, b) {
       var ia = ids.indexOf(a.id), ib = ids.indexOf(b.id);
       if (ia >= 0 || ib >= 0) return (ia < 0 ? 99 : ia) - (ib < 0 ? 99 : ib);
       return a.title.toLowerCase() < b.title.toLowerCase() ? -1 : 1;
@@ -975,7 +1069,7 @@
         }
         break;
       case Z.EDIT:
-        if (dy) st.edit = Math.max(0, Math.min(apps.length - 1, st.edit + dy));
+        if (dy) st.edit = Math.max(0, Math.min(editList().rows.length - 1, st.edit + dy));
         else if (dx) editShelf(dx);
         break;
       case Z.LANG:
@@ -986,6 +1080,8 @@
   }
 
   function back() {
+    if (st.zone === Z.NAME) { closeNameEdit(false); return; }
+    if (st.zone === Z.SETTINGS && settingsPage === 'inputs') { backFromInputNames(); return; }
     if (st.zone === Z.EDIT) { setClass($('shelfedit'), 'open', false); openSettings(); st.row = rowsNow.length - 2; updateFocus(); return; }
     if (st.zone === Z.LANG) { closeLanguages(false); return; }
     if (sheetOpen()) { closeSheets(); return; }
@@ -997,6 +1093,7 @@
   /** The pointer focuses what it's over (the Magic Remote, or a mouse when previewing). */
   function hover(node, zone, index) {
     node.onmouseover = function () {
+      if (st.zone === Z.NAME) return;
       if (saverOn || (sheetOpen() !== (zone === Z.APPS || zone === Z.SETTINGS || zone === Z.EDIT || zone === Z.LANG))) return;
       if (zone === Z.DRAWER && st.zone !== Z.DRAWER) return;
       if (zone !== Z.DRAWER && st.zone === Z.DRAWER && zone !== Z.SHELF) return;
@@ -1103,6 +1200,12 @@
   document.addEventListener('keydown', function (e) {
     var k = e.keyCode;
     if (poke()) { e.preventDefault(); return; }   // the first press only wakes the screen
+    // Typing a name: every key goes to the field, but OK (or the keyboard's Done) saves and Back (or Cancel) leaves.
+    if (st.zone === Z.NAME) {
+      if (k === TV.keys.ok || k === 65376) { closeNameEdit(true); e.preventDefault(); }
+      else if (k === TV.keys.back || k === 27 || k === 65385) { closeNameEdit(false); e.preventDefault(); }
+      return;
+    }
     if (k === TV.keys.left) move(-1, 0);
     else if (k === TV.keys.right) move(1, 0);
     else if (k === TV.keys.up) move(0, -1);
@@ -1141,9 +1244,10 @@
     TV.apps(function (list) {
       apps = list.filter(function (a) { return !hidden(a); });
       Data.setApps(apps);
-      pickShelf();
+      // The inputs first: the shelf can hold them too.
       TV.inputs(function (list2) {
-        inputs = list2;
+        inputs = list2 || [];
+        pickShelf();
         if (done) done();
       });
     });
