@@ -13,7 +13,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(ROOT, 'tools'))
 import translate  # noqa: E402  (the catalogues and the keys the web app uses)
 
-GENERIC = {'tmdbKey': '', 'tmdbRegion': '', 'latitude': '', 'longitude': '', 'city': '', 'language': 'auto',
+GENERIC = {'tmdbKey': '', 'tmdbRegion': '', 'latitude': '', 'longitude': '', 'city': '', 'title': '', 'language': 'auto',
            'currency': '', 'temperature': 'auto', 'theme': 'auto', 'showCrypto': True, 'hideAnimation': False, 'hideApps': [],
            'shelfApps': []}
 
@@ -42,7 +42,11 @@ def read_config(path):
             values[key.strip()] = value.strip().strip('"')
 
     def number(key, default):
-        v = values.get(key, '') or default
+        v = values.get(key, '')
+        # Both coordinates left empty: the TV's time zone picks the city, as in --generic.
+        if not values.get('latitude', '') and not values.get('longitude', ''):
+            return ''
+        v = v or default
         if not re.match(r'^-?\d+(\.\d+)?$', v):
             sys.exit('config.properties: %s must be a number (got "%s")' % (key, v))
         return v
@@ -53,6 +57,7 @@ def read_config(path):
         'latitude': number('latitude', '40.7128'),
         'longitude': number('longitude', '-74.0060'),
         'city': values.get('city', ''),
+        'title': values.get('title', ''),
         'language': values.get('language', 'auto') or 'auto',
         'currency': values.get('currency', 'USD') or 'USD',
         'temperature': values.get('temperature', 'auto') or 'auto',
